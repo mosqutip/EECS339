@@ -235,13 +235,13 @@ ERROR_T BTreeIndex::LookupOrUpdateInternal(const SIZE_T &node,
       rc=b.GetKey(offset,testkey);
       if (rc) {  return rc; }
       if (testkey==key) { 
-	// BTREE_OP_LOOKUP
-	if (op==BTREE_OP_LOOKUP) { 
-	  return b.GetVal(offset,value);
-	// BTREE_OP_UPDATE
-	} else { 
+        // BTREE_OP_LOOKUP
+	      if (op==BTREE_OP_LOOKUP) { 
+	        return b.GetVal(offset,value);
+	      // BTREE_OP_UPDATE
+	      } else { 
           return b.SetVal(offset,value);
-	}
+	      }
       }
     }
     return ERROR_NONEXISTENT;
@@ -353,23 +353,88 @@ ERROR_T BTreeIndex::Lookup(const KEY_T &key, VALUE_T &value)
   return LookupOrUpdateInternal(superblock.info.rootnode, BTREE_OP_LOOKUP, key, value);
 }
 
+// WRITE ME
 ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
 {
   BTreeNode b;
   ERROR_T rc;
   SIZE_T offset;
+  SIZE_T &node = Lookup(superblock.info.rootnode, BTREE_OP_LOOKUP, key, value);
   KEY_T testkey;
   SIZE_T ptr;
 
-  rc = 
-  // WRITE ME
-  return ERROR_UNIMPL;
+  rc = b.Unserialize(buffercache,node);
+
+  if (rc!=ERROR_NOERROR) {
+    return rc;
+  }
+
+  switch (b.info.nodetype) { 
+  case BTREE_ROOT_NODE:
+  case BTREE_INTERIOR_NODE:
+      int space = GetNumSlotsAsInterior() - b.info.numkeys;
+      if (space > 0) {
+         
+  case BTREE_LEAF_NODE:
+    int space = GetNumSlotsAsLeaf() - b.info.numkeys;
+    if (space > 0) {
+      for (offset=0;offset<b.info.numkeys;offset++) {
+        rc = b.GetKey(offset,testkey);
+        if (rc) { return rc; }
+        if (testkey == key) {
+          return ERROR_CONFLICT;
+        } else if (testkey > key) {
+          KeyValuePair kvp = new KeyValuePair(key, value);
+          for (i=b.info.numkeys;i>offset;i--) {
+            KeyValuePair kvptemp;
+            b.GetKeyVal((i - 1), kvptemp);
+            b.SetKeyVal(i,kvptemp);
+            //delete (kvptemp);
+          } 
+          SetKeyVal(offset, kvp);
+          // delete (kvp);
+          b.info.numkeys++;
+        }
+      }
+    } else {
+      BTreeNode btn = new BTreeNode(b);
+      memcpy(btn.data,0,btn.info.GetNumDataBytes());
+      int lhskeys = (b.info.numkeys / 2);
+      int rhskeys = (b.info.numkeys - lhskeys);
+      btn.info.numkeys = lhskeys;
+      for (offset=0;offset<lhskeys;offset++) {
+        KeyValuePair kvp;
+        b.GetKeyVal(offset, kvp);
+        btn.SetKeyVal(offset, kvp);
+        // delete (kvp);
+      }
+      for (offset=0;offset<rhskeys;offset++) {
+        KeyValuePair kvp;
+        b.GetKeyVal((offset+rhskeys), kvp);
+        b.SetKeyVal(offset,kvp);
+        // delete (kvp);
+      }
+      offset = ((keysize + valuesize) * rhskeys);
+      length = ((keysize + valuesize) * lhskeys);
+      memset(b.data, 0, length); 
+
+      KEY_T key;
+      SIZE_T ptr;
+      b.GetPtr(0,ptr);
+      b.GetKey(0,key);
+      Insert(key, ptr);
+    }
+  default:
+    // We can't be looking at anything other than a root, internal, or leaf
+    return ERROR_INSANE;
+    break;
+  }
 }
-  
+
+// WRITE ME
 ERROR_T BTreeIndex::Update(const KEY_T &key, const VALUE_T &value)
 {
-  // WRITE ME
-  return ERROR_UNIMPL;
+  return LookupOrUpdateInternal(superblock.info.rootnode, BTREE_OP_UPDATE, key, value);
 }
 
   
