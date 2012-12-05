@@ -244,7 +244,8 @@ ERROR_T BTreeIndex::LookupOrUpdateInternal(const SIZE_T &node,
 	      }
       }
     }
-    return ERROR_NONEXISTENT;
+    b.Serialize(buffercache,node)
+    return ERROR_NOERROR;
     break;
   default:
     // We can't be looking at anything other than a root, internal, or leaf
@@ -372,27 +373,92 @@ ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
   switch (b.info.nodetype) { 
   case BTREE_ROOT_NODE:
   case BTREE_INTERIOR_NODE:
-      int space = GetNumSlotsAsInterior() - b.info.numkeys;
-      if (space > 0) {
-         
+    // There is space for a new key if there is at
+    // least one more slot than number of keys.
+    int space = GetNumSlotsAsInterior() - b.info.numkeys;
+    if (space > 0) {
+
+      // Get the key and pointer at the current location of offset in this node.
+      for (offset=0;offset<b.info.numkeys;offset++) {
+        rc = b.GetPtr(offset,ptr);
+        if (rc) { return rc; }
+        rc = b.GetKey(offset,testkey);
+        if (rc) { return rc; }
+
+        // If there's a match, update it (avoiding duplicate insertion).
+        // UPDATE : THROW ERROR?
+        if (testkey == key) {
+          Update(key, value);
+
+        // If the current key is greater than the input key, or this is
+        // the last slot, then it's time to insert the key and pointer.
+        } else if ((offset == (b.info.numkeys - 1)) || (testkey < key)) {
+
+          // Push all keys greater than the input key into the next slot.
+          for (int i=b.info.numkeys;i>offset;i--) {
+            KEY_T ktemp;
+            b.GetKey((i - 1), ktemp);
+            b.SetKey(i, ktemp);
+            // delete(ktemp);
+          }
+
+          // Push all pointers associated with keys greater than the
+          // input key into the next slot.
+          for (int i=b.info.numkeys+1;i>offset;i--) {
+            SIZE_T ptrtemp;
+            b.GetPtr((i - 1), ptrtemp)
+            b.SetPtr(i, ptrtemp);
+            // delete(ptrtemp);
+          }
+
+          // Insert the input key in the middle of the
+          // pushed and unpushed values in the node
+          SetKey(offset, key);
+          // Set the ptr to the address? of the node
+          SetPtr(offset, &value);
+
+          // Increment the key counter to reflect the insertion.
+          b.info.numkeys++;
+        }
+      }
+    } else {
+        
+
   case BTREE_LEAF_NODE:
+    // There is space for a new key if there is at
+    // least one more slot than number of keys.
     int space = GetNumSlotsAsLeaf() - b.info.numkeys;
     if (space > 0) {
+
+      // Get the key at the current location of the offset in this node.
       for (offset=0;offset<b.info.numkeys;offset++) {
         rc = b.GetKey(offset,testkey);
         if (rc) { return rc; }
+
+        // If there's a match, update it (avoiding duplicate insertion).
+        // UPDATE : THROW ERROR?
         if (testkey == key) {
-          return ERROR_CONFLICT;
-        } else if (testkey > key) {
+          Update(key, value);
+
+        // If the current key is greater than the input key, or this is
+        // the last slot, then it's time to insert the key and pointer.
+        } else if (testkey < key) {
           KeyValuePair kvp = new KeyValuePair(key, value);
-          for (i=b.info.numkeys;i>offset;i--) {
+
+          // Push all keys greater than the input key into the
+          // next slot, along with their associated values.
+          for (int i=b.info.numkeys;i>offset;i--) {
             KeyValuePair kvptemp;
             b.GetKeyVal((i - 1), kvptemp);
             b.SetKeyVal(i,kvptemp);
             //delete (kvptemp);
-          } 
+          }
+
+          // Insert the input key and value in the middle
+          // of the pushed and unpushed values in the node.
           SetKeyVal(offset, kvp);
           // delete (kvp);
+          // Increment the key counter to reflect the insertion.
           b.info.numkeys++;
         }
       }
@@ -408,6 +474,11 @@ ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
         btn.SetKeyVal(offset, kvp);
         // delete (kvp);
       }
+
+      SIZE_T newnode;
+      AllocateNode(newnode);
+      btn.Serialize(buffercache,newnode);
+
       for (offset=0;offset<rhskeys;offset++) {
         KeyValuePair kvp;
         b.GetKeyVal((offset+rhskeys), kvp);
@@ -418,11 +489,13 @@ ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
       length = ((keysize + valuesize) * lhskeys);
       memset(b.data, 0, length); 
 
+      b.Serialize(buffercache,node);
+
       KEY_T key;
       SIZE_T ptr;
       b.GetPtr(0,ptr);
       b.GetKey(0,key);
-      Insert(key, ptr);
+      Insert(key, newnode);
     }
   default:
     // We can't be looking at anything other than a root, internal, or leaf
