@@ -463,38 +463,45 @@ ERROR_T BTreeIndex::Insert(const KEY_T &key, const VALUE_T &value)
         }
       }
     } else {
+      // Create a new BTree node using b, to copy over relevant data.
       BTreeNode btn = new BTreeNode(b);
+      SIZE_T newnode;
+      AllocateNode(newnode);
+
+      // Zero out the data section of the new node.
       memcpy(btn.data,0,btn.info.GetNumDataBytes());
+
+      // Give the left node half the keys (rounded down),
+      // and the right node the remaining keys. 
       int lhskeys = (b.info.numkeys / 2);
       int rhskeys = (b.info.numkeys - lhskeys);
-      btn.info.numkeys = lhskeys;
-      for (offset=0;offset<lhskeys;offset++) {
+
+      // Use the new node as the right-hand-side node, and
+      // copy the relevant key value pairs into this node.
+      btn.info.numkeys = rhskeys;
+      for (offset=lhskeys;offset<b.info.numkeys;offset++) {
         KeyValuePair kvp;
         b.GetKeyVal(offset, kvp);
         btn.SetKeyVal(offset, kvp);
         // delete (kvp);
       }
 
-      SIZE_T newnode;
-      AllocateNode(newnode);
+      // Write the new node to disk.
       btn.Serialize(buffercache,newnode);
 
-      for (offset=0;offset<rhskeys;offset++) {
-        KeyValuePair kvp;
-        b.GetKeyVal((offset+rhskeys), kvp);
-        b.SetKeyVal(offset,kvp);
-        // delete (kvp);
-      }
-      offset = ((keysize + valuesize) * rhskeys);
-      length = ((keysize + valuesize) * lhskeys);
+      // Use the old node as the left-hand-side node, and erase
+      // the key value pairs that were copied into the new node.
+      offset = ((keysize + valuesize) * lhskeys);
+      length = ((keysize + valuesize) * rhskeys);
       memset(b.data, 0, length); 
 
+      // Write the (updated) old node to disk.
       b.Serialize(buffercache,node);
 
+      // Insert the new node into the tree, with a pointer to
+      // the first element of the new right-hand-side node.
       KEY_T key;
-      SIZE_T ptr;
-      b.GetPtr(0,ptr);
-      b.GetKey(0,key);
+      btn.GetKey(0,key);
       Insert(key, newnode);
     }
   default:
